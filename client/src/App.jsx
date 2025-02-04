@@ -1,7 +1,5 @@
-import { useState } from 'react';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-// Ensure all necessary imports are included
 import Signup from './Signup';
 import HomePage from './HomePage';
 import ResetPassword from './ResetPassword';
@@ -15,6 +13,7 @@ import ContactUs from './ContactUs';
 import Aboutus from './Aboutus';
 import FoundItemForm from './FoundItemForm';
 import LostItemForm from './LostItemForm';
+
 function App() {
   return (
     <BrowserRouter>
@@ -30,7 +29,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/contactus" element={<ContactUs />} />
-        <Route path="//found/:itemId" element={<FoundItemForm />} />
+        <Route path="/found/:itemId" element={<FoundItemForm />} />
         <Route path="/lost/:itemId" element={<LostItemForm />} />
         <Route path="/aboutus" element={<Aboutus />} />
       </Routes>

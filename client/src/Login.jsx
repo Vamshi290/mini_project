@@ -14,11 +14,11 @@ function Login() {
         axios
             .post("http://127.0.0.1:3001/login", { email, password })
             .then((result) => {
-                console.log(result);
+                console.log("Server Response: ", result); // Log the entire response for debugging
 
-                // Check if the server response indicates success
-                if (result.data.message === "Success") {
-                    navigate("/admindashboard");
+                // Ensure the server response contains the expected message
+                if (result.data.message && result.data.message === "Success") {
+                    navigate("/admindashboard"); // Navigate to admin dashboard on success
                 } else {
                     setError("Invalid username or password"); // Set error message for invalid credentials
                 }

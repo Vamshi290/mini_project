@@ -45,7 +45,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: "Email is already registered." });
     }
 
-    bcrypt.hash(password, 10, async (err, hashedPassword) => {
+    bcrypt.hash(password, 3, async (err, hashedPassword) => {
       if (err) {
         console.error("Error hashing password:", err);
         return res.status(500).json({ message: "Internal Server Error", error: err });

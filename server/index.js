@@ -1,3 +1,4 @@
+require('dotenv').config(); // Load environment variables
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
@@ -8,25 +9,34 @@ const multer = require('multer');
 const session = require('express-session');
 const EmployeeModel = require('./models/Employee');
 const LostFoundItemsModel = require("./models/LostFoundItems");
+const LostItemModel = require("./models/LostItem");
+const FoundItemModel = require("./models/FoundItem");
 const LostFound = require("./LostFound");
 const authRoutes = require("./authRoutes");
-
 const app = express();
 
 // Middleware
-app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173', // Ensure this matches your frontend's URL
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'], // Add 'PATCH' here
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+app.use(cors());
 // MongoDB connection
-mongoose.connect("mongodb://127.0.0.1:27017/LostFoundItem")
+mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/LostFoundItem")
   .then(() => console.log("Connected to MongoDB"))
   .catch((err) => console.error("MongoDB connection error:", err));
+
 // Session setup
 app.use(session({
-  secret: 'your-secret-key',  // This secret key is used to sign the session ID cookie
+  secret: process.env.JWT_SECRET || 'your-secret-key',  // Secret key from .env
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false }  // Set secure: true if using https
+  cookie: { secure: false }, // Set secure: true for production with HTTPS
 }));
 
 // Admin role authorization middleware using session
@@ -35,6 +45,16 @@ const verifyAdmin = (req, res, next) => {
     next();
   } else {
     res.status(403).json({ message: 'Forbidden' });
+  }
+};
+
+// Middleware to verify session
+const verifySession = (req, res, next) => {
+  console.log('Session info:', req.session);  // Debugging: Log session information
+  if (req.session.user) {
+    next();
+  } else {
+    res.status(403).json({ message: 'Access denied' });
   }
 };
 
@@ -79,15 +99,6 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Middleware to verify session
-const verifySession = (req, res, next) => {
-  if (req.session.user) {
-    next();
-  } else {
-    res.status(403).json({ message: 'Access denied' });
-  }
-};
-
 // Ensure the uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -97,22 +108,26 @@ if (!fs.existsSync(uploadDir)) {
 // Set up multer storage engine (store files in the 'uploads' folder)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadDir); // Define the folder where images will be stored
+    cb(null, './uploads'); // Ensure the 'uploads' folder exists
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname)); // Filename with timestamp to avoid collisions
+    cb(null, Date.now() + '-' + file.originalname);
   },
 });
 
 const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // Limit file size to 10MB
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // Set file size limit (5MB)
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-    if (!allowedTypes.includes(file.mimetype)) {
-      return cb(new Error('Only image files are allowed!'), false);
+    const allowedTypes = /jpeg|jpg|png/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (extname && mimetype) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files (jpg, jpeg, png) are allowed'));
     }
-    cb(null, true);
   },
 });
 
@@ -133,7 +148,6 @@ app.post("/lostfound", verifySession, upload.single("image"), (req, res) => {
       return res.status(400).json({ message: "All fields are required." });
   }
 
-  // Add current date if no date is provided
   const date = new Date();
 
   LostFoundItemsModel.create({
@@ -141,7 +155,7 @@ app.post("/lostfound", verifySession, upload.single("image"), (req, res) => {
       category,
       description,
       location,
-      date, // Save the current date
+      date,
       itemType,
       image,
   })
@@ -150,7 +164,7 @@ app.post("/lostfound", verifySession, upload.single("image"), (req, res) => {
 });
 
 // Route for updating item status (approve/reject)
-app.patch("/lostfound/update/:id", async (req, res) => {
+app.patch('/lostfound/update/:id', async (req, res) => {
   try {
       const { status } = req.body; // e.g., "approved" or "rejected"
       const updatedItem = await LostFoundItemsModel.findByIdAndUpdate(req.params.id, { status }, { new: true });
@@ -163,6 +177,7 @@ app.patch("/lostfound/update/:id", async (req, res) => {
   }
 });
 
+
 // Route to fetch all pending items
 app.get('/lostfound/pending', async (req, res) => {
   try {
@@ -174,6 +189,7 @@ app.get('/lostfound/pending', async (req, res) => {
   }
 });
 
+
 // Route to fetch all approved lost items
 app.get("/lostfound/lost", async (req, res) => {
   try {
@@ -183,6 +199,7 @@ app.get("/lostfound/lost", async (req, res) => {
       res.status(500).json({ message: "Error fetching lost items", error });
   }
 });
+
 
 // Route to fetch all approved found items
 app.get("/lostfound/found", async (req, res) => {
@@ -194,8 +211,166 @@ app.get("/lostfound/found", async (req, res) => {
   }
 });
 
+// Route for lost and found item submission (new endpoint)
+app.post('/lostitems', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const { name, contactNumber, description, location } = req.body;
+    const imageUrl = `/uploads/${req.file.filename}`;
+
+    if (!name || !contactNumber || !description || !location) {
+      return res.status(400).json({ message: 'Name, description, location, and contact number are required.' });
+    }
+
+    const lostItem = new LostItemModel({
+      name,
+      contactNumber,
+      description,
+      location,
+      imageUrl,
+      status: 'pending', // Default status
+    });
+
+    await lostItem.save();
+    res.status(201).json({ message: 'Lost item saved successfully', lostItem });
+  } catch (error) {
+    console.error('Error saving lost item:', error);
+    res.status(500).json({ message: 'Error saving lost item' });
+  }
+});
+
+// Approve/Reject Lost Item
+app.patch('/lostitems/update/:id', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const updatedItem = await LostItemModel.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+
+    if (!updatedItem) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+
+    res.status(200).json(updatedItem);
+  } catch (error) {
+    console.error("Error updating item status:", error);
+    res.status(500).json({ message: "Error updating item status" });
+  }
+});
+
+// Get Pending Lost Items
+app.get('/lostitems/pending', async (req, res) => {
+  try {
+    const pendingItems = await LostItemModel.find({ status: 'pending' });
+    res.json(pendingItems);
+  } catch (error) {
+    console.error("Error fetching pending lost items:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Get All Lost Items (Approved, Rejected, Pending)
+app.get('/lostitems', async (req, res) => {
+  try {
+    const lostItems = await LostItemModel.find();
+    res.json(lostItems);
+  } catch (error) {
+    console.error("Error fetching lost items:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+/** ============ FOUND ITEMS ROUTES ============ */
+
+// Create Found Item
+app.post('/founditems', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const { name, contactNumber, description, location } = req.body;
+    const imageUrl = `/uploads/${req.file.filename}`;
+
+    if (!name || !contactNumber || !description || !location) {
+      return res.status(400).json({ message: 'Name, description, location, and contact number are required.' });
+    }
+
+    const foundItem = new FoundItemModel({
+      name,
+      contactNumber,
+      description,
+      location,
+      imageUrl,
+      status: 'pending', // Default status
+    });
+
+    await foundItem.save();
+    res.status(201).json({ message: 'Found item saved successfully', foundItem });
+  } catch (error) {
+    console.error('Error saving found item:', error);
+    res.status(500).json({ message: 'Error saving found item' });
+  }
+});
+
+// Approve/Reject Found Item
+app.patch('/founditems/update/:id', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const updatedItem = await FoundItemModel.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+
+    if (!updatedItem) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+
+    res.status(200).json(updatedItem);
+  } catch (error) {
+    console.error("Error updating item status:", error);
+    res.status(500).json({ message: "Error updating item status" });
+  }
+});
+
+// Get Pending Found Items
+app.get('/founditems/pending', async (req, res) => {
+  try {
+    const pendingItems = await FoundItemModel.find({ status: 'pending' });
+    res.json(pendingItems);
+  } catch (error) {
+    console.error("Error fetching pending found items:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Get All Found Items (Approved, Rejected, Pending)
+app.get('/founditems', async (req, res) => {
+  try {
+    const foundItems = await FoundItemModel.find();
+    res.json(foundItems);
+  } catch (error) {
+    console.error("Error fetching found items:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
 // Start the server
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
